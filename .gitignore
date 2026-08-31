@@ -1,0 +1,7 @@
+countries/*/results/
+countries/*/logs/
+countries/*/figures/
+.Rhistory
+.Rproj.user/
+renv/
+.Rprofile
