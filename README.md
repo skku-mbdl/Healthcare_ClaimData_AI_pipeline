@@ -27,9 +27,7 @@ Rscript countries/japan/run_pipeline.R   # Stage 1 -> Stage 2, Japan
 ```
 
 Each run writes to `countries/<country>/results/`, `logs/`, and `figures/`
-(all gitignored). See [CLAUDE.md](CLAUDE.md) for the full architecture,
-methodology notes, and known caveats -- read it before changing anything
-under `core/`.
+(all gitignored).
 
 ## What's NOT included
 
