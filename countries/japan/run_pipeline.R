@@ -1,7 +1,14 @@
 # ==============================================================================
 # countries/japan/run_pipeline.R -- Japan's FULL integrated pipeline.
 #
-#   Rscript countries/japan/run_pipeline.R
+#   Rscript countries/japan/run_pipeline.R            # real JMDC/CKM_DRUG run
+#   Rscript countries/japan/run_pipeline.R --demo      # synthetic demo run, no DB needed
+#
+# --demo replaces ONLY Stage 1's real cohort-build/Cox-screen (which needs a
+# live JMDC connection) with the synthetic seed data under data/synthetic/
+# japan/ (see data/metadata.json and core/R/demo_data.R) -- Stage 2 then runs
+# completely for real, unmodified, picking up the seeded data through the
+# same file-checkpoint fallback a real database outage would use.
 #
 # Runs Stage 1 (drug screen: cohort-build -> Cox screen over JMDC claims)
 # and, immediately after, Stage 2 (side-effect model: Boruta selection ->
@@ -40,6 +47,7 @@ if (length(.file_flag) != 1) {
 this_file <- normalizePath(.file_flag)
 country_dir <- dirname(this_file)                 # .../countries/japan
 pipeline_root <- dirname(dirname(country_dir))     # Healthcare_Data_AI_pipeline root
+demo_mode <- "--demo" %in% commandArgs(trailingOnly = TRUE)
 
 old_wd <- getwd()
 setwd(country_dir)
@@ -50,6 +58,7 @@ source(file.path(core_dir, "db_common.R"))
 source(file.path(core_dir, "clinical_calcs.R"))
 source(file.path(core_dir, "cox_screen.R"))
 source(file.path(core_dir, "candidate_drugs.R"))
+source(file.path(core_dir, "demo_data.R"))
 source(file.path(core_dir, "extract_cohort_outcomes.R"))
 source(file.path(core_dir, "build_analysis_dataset.R"))
 source(file.path(core_dir, "validation_helpers.R"))
@@ -64,74 +73,83 @@ overall_result <- tryCatch({
   # ============================================================================
   # STAGE 1: drug screen (CKM_Drug/Japan equivalent)
   # ============================================================================
-  stage1_dir <- file.path(country_dir, "stage1_drug_screen", "scripts")
-
-  source(file.path(stage1_dir, "utils", "config.R"))        # -> cfg (Stage 1 study-definition constants)
-  source(file.path(stage1_dir, "utils", "db_connect.R"))    # -> connect_jmdc(), connect_ckm_drug()
-  source(file.path(stage1_dir, "utils", "diagnosis_utils.R"))
-  source(file.path(stage1_dir, "01_load_cohort_base.R"))
-  source(file.path(stage1_dir, "02_build_cohort.R"))
-  source(file.path(stage1_dir, "03_covariates.R"))
-  source(file.path(stage1_dir, "04_medication_flags.R"))
-  source(file.path(stage1_dir, "05_outcomes.R"))
-  source(file.path(stage1_dir, "06_drug_exposure.R"))
-
   run_id <- format(Sys.time(), "%Y%m%d_%H%M%S")
   stage1_results_path <- file.path("results", "stage1_drug_screen", run_id)
   dir.create(stage1_results_path, recursive = TRUE)
 
   logger <- new_logger(run_id, file.path("logs", "stage1_drug_screen"))
   stage1_log <- logger$log
-  stage1_log(sprintf("Stage 1 (drug screen) run %s starting. Results -> %s", run_id, stage1_results_path))
+  stage1_log(sprintf("Stage 1 (drug screen) run %s starting (%s). Results -> %s",
+                      run_id, if (demo_mode) "DEMO MODE -- synthetic data" else "real JMDC/CKM_DRUG", stage1_results_path))
 
-  con_jmdc <- connect_jmdc()
-  con_ckm <- tryCatch(connect_ckm_drug(), error = function(e) {
-    stage1_log(sprintf("Could not open a CKM_DRUG connection (%s) -- Stage 1 will still write file checkpoints, but not to the database.", conditionMessage(e)))
-    NULL
-  })
+  if (demo_mode) {
 
-  stage1_cox_results <- tryCatch({
+    stage1_cox_results <- seed_stage1_checkpoint_from_demo("japan", pipeline_root, stage1_results_path, log = stage1_log)
+    stage1_log(sprintf("Stage 1 demo run %s complete (no JMDC/CKM_DRUG connection was used).", run_id))
 
-    check_connection(con_jmdc, "JMDC")
-    if (!is.null(con_ckm)) check_connection(con_ckm, "CKM_DRUG")
-    stage1_log("Database connection(s) verified.")
+  } else {
 
-    cohort_base <- load_cohort_base(con_jmdc, cfg, stage1_log)
-    cohort_base <- add_medication_flags(con_jmdc, cohort_base, cfg, stage1_log)
-    cohort <- build_cohort(con_jmdc, cohort_base, cfg, stage1_log)
-    cohort <- add_covariates(con_jmdc, cohort, cfg, stage1_log)
-    cohort <- add_outcomes(con_jmdc, cohort, cfg, stage1_log)
-    pdc <- add_drug_exposure(con_jmdc, cohort, cfg, stage1_log)
+    stage1_dir <- file.path(country_dir, "stage1_drug_screen", "scripts")
 
-    # Standardize id/ATC column names for the shared Cox screen (core/R/cox_screen.R).
-    cohort_for_cox <- dplyr::rename(cohort, patient_id = member_id)
-    pdc_for_cox <- dplyr::rename(pdc, patient_id = member_id, atc_code = who_atc_code)
-    cox_results <- run_cox_screen(cohort_for_cox, pdc_for_cox, cfg, stage1_log)
+    source(file.path(stage1_dir, "utils", "config.R"))        # -> cfg (Stage 1 study-definition constants)
+    source(file.path(stage1_dir, "utils", "db_connect.R"))    # -> connect_jmdc(), connect_ckm_drug()
+    source(file.path(stage1_dir, "utils", "diagnosis_utils.R"))
+    source(file.path(stage1_dir, "01_load_cohort_base.R"))
+    source(file.path(stage1_dir, "02_build_cohort.R"))
+    source(file.path(stage1_dir, "03_covariates.R"))
+    source(file.path(stage1_dir, "04_medication_flags.R"))
+    source(file.path(stage1_dir, "05_outcomes.R"))
+    source(file.path(stage1_dir, "06_drug_exposure.R"))
 
-    stage1_log("Writing Stage 1 file checkpoints...")
-    write_checkpoint(stage1_results_path, "cohort_processed", cohort)
-    write_checkpoint(stage1_results_path, "drug_exposure", pdc)
-    write_checkpoint(stage1_results_path, "cox_results", cox_results)
+    con_jmdc <- connect_jmdc()
+    con_ckm <- tryCatch(connect_ckm_drug(), error = function(e) {
+      stage1_log(sprintf("Could not open a CKM_DRUG connection (%s) -- Stage 1 will still write file checkpoints, but not to the database.", conditionMessage(e)))
+      NULL
+    })
 
-    if (!is.null(con_ckm)) {
-      stage1_log("Writing processed tables to CKM_DRUG (unprefixed)...")
-      write_ckm_table(con_ckm, "cohort_processed", cohort)
-      write_ckm_table(con_ckm, "drug_exposure", pdc)
-      write_ckm_table(con_ckm, "cox_results", cox_results)
-    } else {
-      stage1_log("CKM_DRUG not reachable -- skipped database write; file checkpoints are this run's only output.")
-    }
+    stage1_cox_results <- tryCatch({
 
-    stage1_log(sprintf("Stage 1 run %s complete.", run_id))
-    cox_results
+      check_connection(con_jmdc, "JMDC")
+      if (!is.null(con_ckm)) check_connection(con_ckm, "CKM_DRUG")
+      stage1_log("Database connection(s) verified.")
 
-  }, error = function(e) {
-    stage1_log(sprintf("Stage 1 run %s FAILED: %s", run_id, conditionMessage(e)))
-    stop(e)
-  }, finally = {
-    DBI::dbDisconnect(con_jmdc)
-    if (!is.null(con_ckm)) DBI::dbDisconnect(con_ckm)
-  })
+      cohort_base <- load_cohort_base(con_jmdc, cfg, stage1_log)
+      cohort_base <- add_medication_flags(con_jmdc, cohort_base, cfg, stage1_log)
+      cohort <- build_cohort(con_jmdc, cohort_base, cfg, stage1_log)
+      cohort <- add_covariates(con_jmdc, cohort, cfg, stage1_log)
+      cohort <- add_outcomes(con_jmdc, cohort, cfg, stage1_log)
+      pdc <- add_drug_exposure(con_jmdc, cohort, cfg, stage1_log)
+
+      # Standardize id/ATC column names for the shared Cox screen (core/R/cox_screen.R).
+      cohort_for_cox <- dplyr::rename(cohort, patient_id = member_id)
+      pdc_for_cox <- dplyr::rename(pdc, patient_id = member_id, atc_code = who_atc_code)
+      cox_results <- run_cox_screen(cohort_for_cox, pdc_for_cox, cfg, stage1_log)
+
+      stage1_log("Writing Stage 1 file checkpoints...")
+      write_checkpoint(stage1_results_path, "cohort_processed", cohort)
+      write_checkpoint(stage1_results_path, "drug_exposure", pdc)
+      write_checkpoint(stage1_results_path, "cox_results", cox_results)
+
+      if (!is.null(con_ckm)) {
+        stage1_log("Writing processed tables to CKM_DRUG (unprefixed)...")
+        write_ckm_table(con_ckm, "cohort_processed", cohort)
+        write_ckm_table(con_ckm, "drug_exposure", pdc)
+        write_ckm_table(con_ckm, "cox_results", cox_results)
+      } else {
+        stage1_log("CKM_DRUG not reachable -- skipped database write; file checkpoints are this run's only output.")
+      }
+
+      stage1_log(sprintf("Stage 1 run %s complete.", run_id))
+      cox_results
+
+    }, error = function(e) {
+      stage1_log(sprintf("Stage 1 run %s FAILED: %s", run_id, conditionMessage(e)))
+      stop(e)
+    }, finally = {
+      DBI::dbDisconnect(con_jmdc)
+      if (!is.null(con_ckm)) DBI::dbDisconnect(con_ckm)
+    })
+  }
 
   # ============================================================================
   # STAGE 2: side-effect model (CKM_PREVENT/JAPAN/SideEffect_Model equivalent)

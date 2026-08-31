@@ -69,7 +69,8 @@ if (!is.null(con)) {
 } else {
   # File-checkpoint fallback: same filter/prevalence logic, computed in R
   # over Stage 1's full nhis_drug_exposure checkpoint instead of SQL-side.
-  drug_exposure_raw <- read_table_or_checkpoint(NULL, "nhis_drug_exposure", stage1_results_root, log = progress)
+  drug_exposure_raw <- read_table_or_checkpoint(NULL, "nhis_drug_exposure", stage1_results_root,
+                                                 checkpoint_name = "drug_exposure", log = progress)
   n_cohort <- length(unique(cohort_raw$patient_id))
 
   exposures <- drug_exposure_raw %>%

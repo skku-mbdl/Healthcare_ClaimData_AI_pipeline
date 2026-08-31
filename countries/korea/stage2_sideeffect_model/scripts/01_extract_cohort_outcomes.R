@@ -25,7 +25,8 @@ con <- tryCatch(connect_db(), error = function(e) {
   NULL
 })
 
-cohort_raw <- read_table_or_checkpoint(con, "nhis_cohort_processed", stage1_results_root, log = progress)
+cohort_raw <- read_table_or_checkpoint(con, "nhis_cohort_processed", stage1_results_root,
+                                        checkpoint_name = "cohort_processed", log = progress)
 
 if (nrow(cohort_raw) == 0) {
   stop("nhis_cohort_processed returned 0 rows -- check that countries/korea/stage1_drug_screen has been run.")

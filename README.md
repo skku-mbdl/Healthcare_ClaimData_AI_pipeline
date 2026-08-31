@@ -1,5 +1,4 @@
-# Healthcare_ClaimData_AI_pipeline
-Automatic pipeline to develop AI prediction model using medical claim data
+# Healthcare_Data_AI_pipeline
 
 One integrated, automatic pharmacoepidemiology pipeline for Korea (NHIS Sample
 Cohort) and Japan (JMDC claims), merging what used to be two independent
@@ -21,26 +20,40 @@ stages run in one command per country, and the hand-off is automatic.
 ## Running it
 
 ```r
-Rscript 00_setup.R                       # once per machine
-Rscript countries/korea/run_pipeline.R   # Stage 1 -> Stage 2, Korea
-Rscript countries/japan/run_pipeline.R   # Stage 1 -> Stage 2, Japan
+Rscript 00_setup.R                              # once per machine
+Rscript countries/korea/run_pipeline.R          # Stage 1 -> Stage 2, Korea, real NHIS/CKM_DRUG
+Rscript countries/japan/run_pipeline.R          # Stage 1 -> Stage 2, Japan, real JMDC/CKM_DRUG
+
+Rscript countries/korea/run_pipeline.R --demo   # same, but against synthetic data -- no DB needed
+Rscript countries/japan/run_pipeline.R --demo   # (see data/metadata.json, data/generate_synthetic_data.R)
 ```
 
 Each run writes to `countries/<country>/results/`, `logs/`, and `figures/`
-(all gitignored).
+(all gitignored). 
 
 ## What's NOT included
 
 `CKM_PREVENT/JAPAN/PREVENT` (the AHA PREVENT risk-equation validation
 project) is deliberately excluded -- it answers a different research
 question (external-validating a published risk score) and is not part of
-this drug-side-effect pipeline. See CLAUDE.md for the one place this
-exclusion mattered architecturally (Japan's Stage 2 cohort source).
+this drug-side-effect pipeline. 
 
 ## Status
 
-Written and reviewed, with the shared statistical/data-transform logic in
-`core/R/` unit-tested against synthetic data (see CLAUDE.md's "Testing"
-section) -- but **never run against real NHIS/JMDC data or a live CKM_DRUG
-database**, since neither is reachable from the environment this was
-built in. Treat every script as reviewed-but-unverified until run for real.
+Both countries' full pipelines (`--demo` mode) have been **actually run end to
+end and finished successfully** -- cohort/outcome extraction through Boruta
+selection, Cox model fitting, held-out validation, SHAP explanation, and the
+Boruta Excel export -- against synthetic data with genuine embedded signal
+(3 of 15 simulated drugs per country carry a real excess hazard). Both
+countries' models correctly recovered that signal: Korea confirmed all 3 of
+its true "risky" drugs by name across every outcome; Japan confirmed 1 of 3,
+also as SHAP's top driver. That pilot run caught and fixed four real bugs
+(two introduced by the merge, two pre-existing in the original pipelines but
+never previously exercised) -- 
+
+What's still unverified: any actual SQL query against real NHIS/JMDC/
+CKM_DRUG, since neither a SQL Server nor real patient data is reachable from
+the environment this was built in. Treat the DB-facing SQL in each country's
+`stage1_drug_screen`/`stage2_sideeffect_model` adapters as
+reviewed-but-unverified until run against a live server -- everything else
+has now actually been executed, not just reviewed.

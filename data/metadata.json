@@ -1,0 +1,109 @@
+{
+  "pipeline": {
+    "name": "Healthcare_Data_AI_pipeline",
+    "description": "Integrated CKM drug-side-effect pipeline (Stage 1 drug screen -> Stage 2 side-effect model), Korea (NHIS Sample Cohort) and Japan (JMDC claims).",
+    "countries": ["korea", "japan"],
+    "stages": ["stage1_drug_screen", "stage2_sideeffect_model"],
+    "generated_by": "written by hand alongside core/R and countries/*, not auto-derived -- keep in sync manually if a table's shape changes",
+    "schema_version": "1.0.0"
+  },
+
+  "database": {
+    "server": "SY_PC",
+    "shared_database": "CKM_DRUG",
+    "note": "Both countries' Stage 1 write to this ONE database, using different table-name conventions to avoid colliding -- see 'tables' below."
+  },
+
+  "tables": {
+    "cohort_processed": {
+      "description": "Stage 1 output: one row per CKM stage 2/3 cohort member, with covariates, competing-risks outcome flags/dates, and follow-up end.",
+      "korea": {
+        "db_table": "nhis_cohort_processed",
+        "id_column": "PERSON_ID",
+        "columns": {
+          "PERSON_ID": "string, patient identifier",
+          "index_date": "date, first health-checkup date in the study window",
+          "age": "integer, age at index (band-midpoint approximation, see CLAUDE.md)",
+          "sex": "string, '1' = male / '2' = female (raw NHID_JK.SEX coding)",
+          "egfr": "double, 2021 CKD-EPI creatinine equation (race-free)",
+          "systolic_bp": "integer, mmHg at index checkup",
+          "smoking_habit": "integer category 1-3",
+          "drinking_habit": "integer category 1-3",
+          "exercise_habit": "integer category 1-3",
+          "hdl_cholesterol": "double, mg/dL",
+          "ldl_cholesterol": "double, mg/dL",
+          "followup_end": "date, min(death date, administrative cutoff 2013-12-31)",
+          "died_in_data": "boolean, any-cause death on record",
+          "death_date": "date, nullable -- month-end approximation of NHID_JK.DTH_YM",
+          "stroke_event": "boolean", "stroke_date": "date, nullable",
+          "heart_failure_event": "boolean", "heart_failure_date": "date, nullable",
+          "chd_event": "boolean", "chd_date": "date, nullable",
+          "cv_death_event": "boolean", "cv_death_date": "date, nullable"
+        }
+      },
+      "japan": {
+        "db_table": "cohort_processed",
+        "id_column": "member_id",
+        "columns": {
+          "member_id": "string, patient identifier",
+          "index_date": "date, first annual health-checkup date in the study window",
+          "age": "integer, exact age at index (from birth month/year)",
+          "sex": "string, 'Male' / 'Female'",
+          "egfr": "double, 2021 CKD-EPI creatinine equation (race-free)",
+          "systolic_bp": "integer, mmHg at index checkup",
+          "smoking_habit": "integer category", "drinking_habit": "integer category", "exercise_habit": "integer category",
+          "hdl_cholesterol": "double, mg/dL", "ldl_cholesterol": "double, mg/dL",
+          "followup_end": "date, min(observation end, administrative cutoff 2022-07-31)",
+          "died_in_data": "boolean, Enrollment.withdrawal_death_flag == 1",
+          "stroke_event": "boolean", "stroke_date": "date, nullable",
+          "heart_failure_event": "boolean", "heart_failure_date": "date, nullable",
+          "chd_event": "boolean", "chd_date": "date, nullable",
+          "cv_death_event": "boolean", "cv_death_date": "date, nullable",
+          "note": "NO separate death_date column (unlike Korea) -- Stage 2 approximates death_date := followup_end when died_in_data is TRUE. See CLAUDE.md 'Known asymmetries'."
+        }
+      }
+    },
+
+    "drug_exposure": {
+      "description": "Stage 1 output: one row per (patient, ATC code) with PDC (Proportion of Days Covered) during the 1-year baseline lookback; exposed = PDC > 0.8.",
+      "korea": {
+        "db_table": "nhis_drug_exposure",
+        "columns": { "PERSON_ID": "string", "ATC_CODE": "string, WHO ATC code", "days_covered": "integer", "pdc": "double in [0,1]", "exposed": "boolean" }
+      },
+      "japan": {
+        "db_table": "drug_exposure",
+        "columns": { "member_id": "string", "who_atc_code": "string, WHO ATC code (Drug_master.who_atc_code)", "days_covered": "integer", "pdc": "double in [0,1]", "exposed": "boolean" }
+      }
+    },
+
+    "cox_results": {
+      "description": "Stage 1 output: single-drug-at-a-time Cox screen, one row per (ATC code, outcome). SAME column names for both countries (core/R/cox_screen.R emits this shape uniformly) -- this is what core/R/candidate_drugs.R reads automatically as Stage 2's candidate-drug hand-off.",
+      "korea": { "db_table": "nhis_cox_results" },
+      "japan": { "db_table": "cox_results" },
+      "columns": {
+        "atc_code": "string", "outcome": "string, one of chd/stroke/heart_failure/cv_death",
+        "hr": "double, hazard ratio for exposed vs. unexposed",
+        "ci_lower": "double", "ci_upper": "double", "p_value": "double",
+        "n": "integer, model N", "n_event": "integer, events in the fitted model",
+        "candidate": "boolean, TRUE when hr > 1.00 AND p_value < 0.05"
+      }
+    }
+  },
+
+  "demo_data": {
+    "description": "Synthetic (NOT real patient data) stand-in for Stage 1's output, used by `Rscript countries/<country>/run_pipeline.R --demo`. See data/generate_synthetic_data.R for the generation method -- 3 of 15 simulated ATC codes carry a real embedded excess hazard and are the only ones marked candidate == TRUE in the synthetic cox_results, so a demo run exercises genuine (if synthetic) signal, not pure noise.",
+    "generator_script": "data/generate_synthetic_data.R",
+    "seed": 20260901,
+    "n_patients": 2000,
+    "korea": {
+      "cohort_processed": "data/synthetic/korea/cohort_processed.rds",
+      "drug_exposure": "data/synthetic/korea/drug_exposure.rds",
+      "cox_results": "data/synthetic/korea/cox_results.rds"
+    },
+    "japan": {
+      "cohort_processed": "data/synthetic/japan/cohort_processed.rds",
+      "drug_exposure": "data/synthetic/japan/drug_exposure.rds",
+      "cox_results": "data/synthetic/japan/cox_results.rds"
+    }
+  }
+}

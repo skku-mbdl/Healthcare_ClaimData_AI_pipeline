@@ -69,7 +69,16 @@ validate_models <- function(dfd_test, outcome_names, outcome_display_names,
   confirmed_drug_table <- do.call(rbind, lapply(outcome_names, function(o) {
     drugs <- confirmed_drugs[[o]]
     if (length(drugs) == 0) {
-      return(data.frame(outcome = outcome_display_names[[o]], col_name = character(0)))
+      # All FOUR columns must be zero-length, matching the populated branch
+      # below column-for-column -- a pre-existing bug (present in the
+      # original, pre-merge pipeline too, just never exercised) returned
+      # data.frame(outcome = <scalar>, col_name = character(0)) here, which
+      # errors ("arguments imply differing number of rows: 1, 0") the
+      # moment ANY outcome has zero Boruta-confirmed drugs, since a
+      # length-1 column can't be recycled against a length-0 one. Caught by
+      # this pipeline's own demo pilot run, where Boruta legitimately
+      # confirmed 0 drugs for 2 of Japan's 4 outcomes on synthetic data.
+      return(data.frame(outcome = character(0), col_name = character(0), log_hr = numeric(0), hazard_ratio = numeric(0)))
     }
     fit <- cox_models[[o]]$event
     coefs <- coef(fit)
